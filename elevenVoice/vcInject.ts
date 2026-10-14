@@ -65,8 +65,15 @@ export async function playClipIntoVc(blob: Blob) {
     }
 
     const [{ input: firstInput }] = inputs;
-    await firstInput.context.resume();
-    const buffer = await firstInput.context.decodeAudioData(await blob.arrayBuffer());
+    let buffer: AudioBuffer;
+    try {
+        await firstInput.context.resume();
+        buffer = await firstInput.context.decodeAudioData(await blob.arrayBuffer());
+    } catch (e) {
+        logger.error("VC playback failed", e);
+        showToast("Could not play this clip into voice.", "failure");
+        return;
+    }
 
     await Promise.all(inputs.map(({ input, destination }) => new Promise<void>(resolve => {
         const source = input.context.createBufferSource();

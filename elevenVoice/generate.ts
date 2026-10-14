@@ -6,6 +6,7 @@
 
 import { PluginNative } from "@utils/types";
 
+import { pcmToWav } from "./sendVoice";
 import { settings } from "./settings";
 
 const Native = (IS_DISCORD_DESKTOP
@@ -13,6 +14,16 @@ const Native = (IS_DISCORD_DESKTOP
     : null);
 
 export type AudioResult = { ok: true; bytes: number[]; mime: string; } | { ok: false; error: string; };
+
+function normalizeAudioResult(result: AudioResult, outputFormat: string): AudioResult {
+    if (!result.ok) return result;
+    if (outputFormat.startsWith("pcm_")) {
+        const sampleRate = Number(outputFormat.split("_")[1]) || 24000;
+        const wav = pcmToWav(result.bytes, sampleRate);
+        return { ok: true, bytes: Array.from(wav), mime: "audio/wav" };
+    }
+    return result;
+}
 
 function key() {
     return settings.store.apiKey.trim() || undefined;
@@ -72,21 +83,23 @@ export async function generateTts(text: string, voiceId?: string): Promise<Audio
                 body: JSON.stringify({ text: args.text, model_id: args.modelId }),
             }
         );
-    if (first.ok || !isLibraryVoiceError(first.error)) return first;
+    if (first.ok || !isLibraryVoiceError(first.error)) return normalizeAudioResult(first, args.outputFormat);
 
     const fallback = await pickPremadeVoice();
     if (!fallback || fallback === args.voiceId) return first;
     settings.store.voiceId = fallback;
     const retryArgs = { ...args, voiceId: fallback };
-    if (Native) return Native.tts(retryArgs);
-    return rendererPost(
-        `/v1/text-to-speech/${encodeURIComponent(fallback)}?output_format=${encodeURIComponent(args.outputFormat)}`,
-        {
-            method: "POST",
-            headers: { "Content-Type": "application/json", Accept: "audio/*" },
-            body: JSON.stringify({ text: args.text, model_id: args.modelId }),
-        }
-    );
+    const retried = Native
+        ? await Native.tts(retryArgs)
+        : await rendererPost(
+            `/v1/text-to-speech/${encodeURIComponent(fallback)}?output_format=${encodeURIComponent(args.outputFormat)}`,
+            {
+                method: "POST",
+                headers: { "Content-Type": "application/json", Accept: "audio/*" },
+                body: JSON.stringify({ text: args.text, model_id: args.modelId }),
+            }
+        );
+    return normalizeAudioResult(retried, args.outputFormat);
 }
 
 export async function generateSts(audio: number[], mime: string, voiceId?: string): Promise<AudioResult> {
@@ -98,14 +111,15 @@ export async function generateSts(audio: number[], mime: string, voiceId?: strin
         modelId: "eleven_multilingual_sts_v2",
         outputFormat: settings.store.outputFormat,
     };
-    if (Native) return Native.sts(args);
+    if (Native) return normalizeAudioResult(await Native.sts(args), args.outputFormat);
     const form = new FormData();
     form.append("audio", new Blob([Uint8Array.from(audio)], { type: mime || "audio/webm" }), "clip.webm");
     form.append("model_id", args.modelId);
-    return rendererPost(
+    const res = await rendererPost(
         `/v1/speech-to-speech/${encodeURIComponent(args.voiceId)}/stream?output_format=${encodeURIComponent(args.outputFormat)}`,
         { method: "POST", body: form }
     );
+    return normalizeAudioResult(res, args.outputFormat);
 }
 
 export async function listVoices() {

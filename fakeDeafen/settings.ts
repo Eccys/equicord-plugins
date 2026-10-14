@@ -12,11 +12,13 @@ export const settings = definePluginSettings({
         type: OptionType.BOOLEAN,
         default: true,
         description: "Appear muted to others while fake deafen is on.",
+        onChange: () => { },
     },
     fakeDeafen: {
         type: OptionType.BOOLEAN,
         default: true,
         description: "Appear deafened to others while fake deafen is on.",
+        onChange: () => { },
     },
     enableKeybind: {
         type: OptionType.BOOLEAN,

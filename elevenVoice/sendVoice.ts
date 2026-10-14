@@ -47,15 +47,52 @@ export async function computeMeta(blob: Blob): Promise<AudioMeta> {
     }
 }
 
+export function pcmToWav(pcmBytes: number[] | Uint8Array, sampleRate = 24000): Uint8Array<ArrayBuffer> {
+    const raw = pcmBytes instanceof Uint8Array ? pcmBytes : Uint8Array.from(pcmBytes);
+    if (
+        raw.byteLength >= 12 &&
+        raw[0] === 0x52 && raw[1] === 0x49 && raw[2] === 0x46 && raw[3] === 0x46 &&
+        raw[8] === 0x57 && raw[9] === 0x41 && raw[10] === 0x56 && raw[11] === 0x45
+    ) {
+        return Uint8Array.from(raw);
+    }
+    const dataLen = raw.byteLength - (raw.byteLength % 2);
+    const wav = new Uint8Array(44 + dataLen);
+    const view = new DataView(wav.buffer);
+    wav.set([0x52, 0x49, 0x46, 0x46], 0); // "RIFF"
+    view.setUint32(4, 36 + dataLen, true);
+    wav.set([0x57, 0x41, 0x56, 0x45], 8); // "WAVE"
+    wav.set([0x66, 0x6d, 0x74, 0x20], 12); // "fmt "
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);
+    view.setUint16(22, 1, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * 2, true);
+    view.setUint16(32, 2, true);
+    view.setUint16(34, 16, true);
+    wav.set([0x64, 0x61, 0x74, 0x61], 36); // "data"
+    view.setUint32(40, dataLen, true);
+    wav.set(raw.subarray(0, dataLen), 44);
+    return wav;
+}
+
 function mimeToExt(mime: string) {
-    if (mime.includes("ogg") || mime.includes("opus")) return { ext: "ogg", type: "audio/ogg; codecs=opus" };
-    if (mime.includes("mpeg") || mime.includes("mp3")) return { ext: "mp3", type: "audio/mpeg" };
-    if (mime.includes("wav")) return { ext: "wav", type: "audio/wav" };
-    if (mime.includes("webm")) return { ext: "webm", type: "audio/webm" };
+    const lower = (mime || "").toLowerCase();
+    if (lower.includes("ogg") || lower.includes("opus")) return { ext: "ogg", type: "audio/ogg; codecs=opus" };
+    if (lower.includes("mpeg") || lower.includes("mp3")) return { ext: "mp3", type: "audio/mpeg" };
+    if (lower.includes("wav") || lower.includes("pcm") || lower.includes("l16")) return { ext: "wav", type: "audio/wav" };
+    if (lower.includes("webm")) return { ext: "webm", type: "audio/webm" };
     return { ext: "ogg", type: mime || "audio/ogg; codecs=opus" };
 }
 
 export function bytesToBlob(bytes: number[], mime: string) {
+    const lower = (mime || "").toLowerCase();
+    if (lower.includes("pcm") || lower.includes("l16")) {
+        const rateMatch = lower.match(/rate=(\d+)|pcm_(\d+)/);
+        const sampleRate = Number(rateMatch?.[1] || rateMatch?.[2]) || 24000;
+        const wav = pcmToWav(bytes, sampleRate);
+        return new Blob([wav], { type: "audio/wav" });
+    }
     return new Blob([Uint8Array.from(bytes)], { type: mimeToExt(mime).type });
 }
 
