@@ -33,20 +33,34 @@ const VOICE_ID_RE = /^[a-zA-Z0-9]{8,64}$/;
 
 type Result = { ok: true; bytes: number[]; mime: string; } | { ok: false; error: string; };
 
-function resolveKey(apiKey?: string) {
+function resolveKey(apiKey?: string): { ok: true; key: string; } | { ok: false; error: string; } {
     const key = (apiKey || process.env.ELEVENLABS_API_KEY || "").trim();
-    if (!key) return { error: "No ElevenLabs API key. Set ELEVENLABS_API_KEY or paste one in plugin settings." };
-    if (key.length > 200) return { error: "API key looks invalid." };
-    return { key };
+    if (!key) return { ok: false, error: "No ElevenLabs API key. Set ELEVENLABS_API_KEY or paste one in plugin settings." };
+    if (key.length > 200) return { ok: false, error: "API key looks invalid." };
+    return { ok: true, key };
 }
 
 function assertVoice(voiceId: string) {
     return VOICE_ID_RE.test(voiceId) ? null : "Voice id looks invalid.";
 }
 
+function formatElevenError(status: number, body: string) {
+    try {
+        const parsed = JSON.parse(body) as { detail?: { message?: string; status?: string; code?: string; } | string; };
+        const { detail } = parsed;
+        const message = typeof detail === "string" ? detail : detail?.message;
+        const code = typeof detail === "object" ? detail?.status || detail?.code : "";
+        if (message && (code === "payment_required" || /library voices/i.test(message)))
+            return "That voice is from the Voice Library. Free API keys can only use premade voices like Sarah, Will, or George. Run /11voices and pick one marked premade.";
+        if (typeof message === "string" && message.trim()) return message;
+    } catch { /* raw body fallback */ }
+    const short = body.slice(0, 240) || "request failed";
+    return `ElevenLabs ${status}: ${short}`;
+}
+
 async function elevenFetch(pathAndQuery: string, init: RequestInit, apiKey?: string): Promise<Result> {
     const auth = resolveKey(apiKey);
-    if ("error" in auth) return { ok: false, error: auth.error };
+    if (!auth.ok) return { ok: false, error: auth.error };
 
     const url = new URL(pathAndQuery, "https://api.elevenlabs.io");
     if (!ALLOWED_HOSTS.has(url.hostname)) return { ok: false, error: "Blocked host." };
@@ -64,8 +78,7 @@ async function elevenFetch(pathAndQuery: string, init: RequestInit, apiKey?: str
         });
         if (!res.ok) {
             const body = await res.text().catch(() => "");
-            const short = body.slice(0, 240) || res.statusText;
-            return { ok: false, error: `ElevenLabs ${res.status}: ${short}` };
+            return { ok: false, error: formatElevenError(res.status, body) };
         }
         const buf = new Uint8Array(await res.arrayBuffer());
         if (buf.byteLength > MAX_AUDIO_BYTES) return { ok: false, error: "Audio response too large." };
@@ -132,16 +145,17 @@ export async function sts(
 export async function listVoices(
     _event: Electron.IpcMainInvokeEvent,
     args: { apiKey?: string; } = {}
-): Promise<{ ok: true; voices: { voice_id: string; name: string; }[]; } | { ok: false; error: string; }> {
+): Promise<{ ok: true; voices: { voice_id: string; name: string; category: string; }[]; } | { ok: false; error: string; }> {
     const audio = await elevenFetch("/v1/voices", { method: "GET" }, args.apiKey);
     if (!audio.ok) return audio;
     try {
         const json = JSON.parse(Buffer.from(audio.bytes).toString("utf8")) as {
-            voices?: { voice_id: string; name: string; }[];
+            voices?: { voice_id: string; name: string; category?: string; }[];
         };
         const voices = (json.voices ?? []).map(v => ({
             voice_id: String(v.voice_id),
             name: String(v.name),
+            category: String(v.category || "unknown"),
         })).filter(v => VOICE_ID_RE.test(v.voice_id));
         return { ok: true, voices };
     } catch {

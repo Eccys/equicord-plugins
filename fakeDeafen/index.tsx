@@ -2,22 +2,20 @@
  * Vencord, a Discord client mod
  * Copyright (c) 2024 Vendicated and contributors
  * SPDX-License-Identifier: GPL-3.0-or-later
- *
- * Adapted from hyyven/Vencord-FakeDeafen for Equicord userplugins.
  */
 
+// Adapted from hyyven/Vencord-FakeDeafen for Equicord userplugins.
+
 import { UserAreaButton, UserAreaRenderProps } from "@api/UserArea";
-import ErrorBoundary from "@components/ErrorBoundary";
 import { Logger } from "@utils/Logger";
 import definePlugin from "@utils/types";
 import { findByPropsLazy } from "@webpack";
-import { ChannelStore, SelectedChannelStore, showToast, Toasts, useStateFromStores } from "@webpack/common";
+import { ChannelStore, MediaEngineStore, SelectedChannelStore, showToast, useStateFromStores } from "@webpack/common";
 
 import { settings } from "./settings";
 
 const logger = new Logger("FakeDeafen");
 const GatewaySocket = findByPropsLazy("getSocket");
-const MediaEngineStore = findByPropsLazy("isDeaf", "isMute");
 
 type GatewaySend = (op: number, data?: any, ...args: any[]) => any;
 
@@ -64,7 +62,7 @@ function refreshVoiceState(enabled: boolean) {
             channel_id: channelId,
             self_mute: (enabled && settings.store.fakeMute) || (MediaEngineStore?.isMute?.() ?? false),
             self_deaf: (enabled && settings.store.fakeDeafen) || (MediaEngineStore?.isDeaf?.() ?? false),
-            self_video: false,
+            self_video: MediaEngineStore?.isVideoEnabled?.() ?? false,
             flags: 0,
         });
     } catch (e) {
@@ -75,7 +73,7 @@ function refreshVoiceState(enabled: boolean) {
 function setEnabled(next: boolean) {
     settings.store.currentlyEnabled = next;
     refreshVoiceState(next);
-    showToast(next ? "Fake deafen on" : "Fake deafen off", next ? Toasts.Type.SUCCESS : Toasts.Type.MESSAGE);
+    showToast(next ? "Fake deafen on" : "Fake deafen off", next ? "success" : "message");
 }
 
 function toggleEnabled() {
@@ -83,7 +81,7 @@ function toggleEnabled() {
 }
 
 function handleKeyDown(event: KeyboardEvent) {
-    if (!settings.store.enableKeybind) return;
+    if (event.repeat || !settings.store.enableKeybind) return;
     if (!(event.ctrlKey && event.shiftKey && event.code === "KeyQ")) return;
     event.preventDefault();
     toggleEnabled();
@@ -137,10 +135,11 @@ export default definePlugin({
         { name: "Eccys", id: 0n },
     ],
     tags: ["Voice"],
+    dependencies: ["UserAreaAPI"],
     settings,
     userAreaButton: {
         icon: HeadphonesIcon,
-        render: ErrorBoundary.wrap(FakeDeafenButton, { noop: true }),
+        render: FakeDeafenButton,
     },
     flux: {
         CONNECTION_OPEN() {

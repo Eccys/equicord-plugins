@@ -2,14 +2,14 @@
  * Vencord, a Discord client mod
  * Copyright (c) 2026 Vendicated and contributors
  * SPDX-License-Identifier: GPL-3.0-or-later
- *
- * Mix generated clips into Discord's Web Audio capture path.
- * Official Discord Desktop uses a native encoder; this only works on
- * Equibop, Vesktop, and Discord web.
  */
 
+// Mix generated clips into Discord's Web Audio capture path.
+// Official Discord Desktop uses a native encoder; this only works on
+// Equibop, Vesktop, and Discord web.
+
 import { Logger } from "@utils/Logger";
-import { showToast, Toasts } from "@webpack/common";
+import { showToast } from "@webpack/common";
 
 const logger = new Logger("ElevenVoice");
 
@@ -55,12 +55,12 @@ export function releaseInput(stream: MediaStream) {
 
 export async function playClipIntoVc(blob: Blob) {
     if (!canInjectVoice()) {
-        showToast("Live VC playback needs Equibop, Vesktop, or Discord web.", Toasts.Type.FAILURE);
+        showToast("Live VC playback needs Equibop, Vesktop, or Discord web.", "failure");
         return;
     }
     const inputs = [...mixedInputs.values()];
     if (inputs.length === 0) {
-        showToast("Join a voice channel first. If you already did, toggle the plugin after joining.", Toasts.Type.FAILURE);
+        showToast("Join a voice channel first. If you already did, toggle the plugin after joining.", "failure");
         return;
     }
 
@@ -83,7 +83,7 @@ export async function playClipIntoVc(blob: Blob) {
         source.start();
     }))).catch(e => {
         logger.error("VC playback failed", e);
-        showToast("Could not play this clip into voice.", Toasts.Type.FAILURE);
+        showToast("Could not play this clip into voice.", "failure");
     });
 }
 

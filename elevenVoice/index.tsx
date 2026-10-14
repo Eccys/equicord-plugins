@@ -10,7 +10,7 @@ import { NavContextMenuPatchCallback } from "@api/ContextMenu";
 import { openModal } from "@utils/modal";
 import definePlugin from "@utils/types";
 import { RenderModalProps } from "@vencord/discord-types";
-import { Forms, Menu, Modal, React, showToast, TextArea, Toasts, useRef, useState } from "@webpack/common";
+import { Forms, Menu, Modal, React, showToast, TextArea, useEffect, useRef, useState } from "@webpack/common";
 
 import { generateSts, generateTts, listVoices } from "./generate";
 import { normalizeTags } from "./parse";
@@ -28,19 +28,23 @@ async function deliver(bytes: number[], mime: string, intoVc: boolean) {
     else await sendAsVoiceMessage(blob, mime);
 }
 
-async function runTts(script: string, opts?: { voiceId?: string; intoVc?: boolean; }) {
+async function runTts(script: string, opts?: { voiceId?: string; intoVc?: boolean; }): Promise<boolean> {
     const text = normalizeTags(script);
     if (!text) {
-        showToast("Nothing to say.", Toasts.Type.FAILURE);
-        return;
+        showToast("Nothing to say.", "failure");
+        return false;
     }
-    showToast("Generating speech…", Toasts.Type.MESSAGE);
+    showToast("Generating speech…", "message");
+    const requested = opts?.voiceId || settings.store.voiceId;
     const result = await generateTts(text, opts?.voiceId);
     if (!result.ok) {
-        showToast(result.error, Toasts.Type.FAILURE);
-        return;
+        showToast(result.error, "failure");
+        return false;
     }
+    if (settings.store.voiceId !== requested)
+        showToast("Library voices are blocked on the free API. Switched to a premade voice.", "message");
     await deliver(result.bytes, result.mime, opts?.intoVc === true);
+    return true;
 }
 
 const attachMenuPatch: NavContextMenuPatchCallback = (children, props) => {
@@ -71,12 +75,23 @@ function ElevenModal({ modalProps }: { modalProps: RenderModalProps; }) {
     const [busy, setBusy] = useState(false);
     const [recording, setRecording] = useState(false);
     const recorderRef = useRef<MediaRecorder | null>(null);
+    const streamRef = useRef<MediaStream | null>(null);
+
+    useEffect(() => () => {
+        if (recorderRef.current && recorderRef.current.state !== "inactive") {
+            recorderRef.current.onstop = null;
+            recorderRef.current.stop();
+        }
+        if (streamRef.current) {
+            for (const t of streamRef.current.getTracks()) t.stop();
+        }
+    }, []);
 
     async function go(intoVc: boolean) {
         setBusy(true);
         try {
-            await runTts(script, { intoVc });
-            modalProps.onClose();
+            const ok = await runTts(script, { intoVc });
+            if (ok) modalProps.onClose();
         } finally {
             setBusy(false);
         }
@@ -89,31 +104,36 @@ function ElevenModal({ modalProps }: { modalProps: RenderModalProps; }) {
         }
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            streamRef.current = stream;
             const rec = new MediaRecorder(stream);
             const chunks: BlobPart[] = [];
             rec.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
             rec.onstop = async () => {
                 setRecording(false);
                 for (const t of stream.getTracks()) t.stop();
+                streamRef.current = null;
                 const blob = new Blob(chunks, { type: rec.mimeType || "audio/webm" });
                 const bytes = Array.from(new Uint8Array(await blob.arrayBuffer()));
                 setBusy(true);
-                showToast("Converting voice…", Toasts.Type.MESSAGE);
-                const result = await generateSts(bytes, blob.type);
-                setBusy(false);
-                if (!result.ok) {
-                    showToast(result.error, Toasts.Type.FAILURE);
-                    return;
+                try {
+                    showToast("Converting voice…", "message");
+                    const result = await generateSts(bytes, blob.type);
+                    if (!result.ok) {
+                        showToast(result.error, "failure");
+                        return;
+                    }
+                    await deliver(result.bytes, result.mime, false);
+                    modalProps.onClose();
+                } finally {
+                    setBusy(false);
                 }
-                await deliver(result.bytes, result.mime, false);
-                modalProps.onClose();
             };
             recorderRef.current = rec;
             rec.start();
             setRecording(true);
-            showToast("Recording. Click again to convert.", Toasts.Type.MESSAGE);
+            showToast("Recording. Click again to convert.", "message");
         } catch {
-            showToast("Microphone permission denied.", Toasts.Type.FAILURE);
+            showToast("Microphone permission denied.", "failure");
         }
     }
 
@@ -130,11 +150,13 @@ function ElevenModal({ modalProps }: { modalProps: RenderModalProps; }) {
                 },
                 {
                     text: canInjectVoice() ? "Play in VC" : "VC needs Equibop",
+                    variant: "secondary",
                     disabled: busy || !script.trim() || !canInjectVoice(),
                     onClick: () => go(true),
                 },
                 {
                     text: recording ? "Stop and convert" : "Record clone",
+                    variant: "secondary",
                     disabled: busy,
                     onClick: clone,
                 },
@@ -219,7 +241,10 @@ export default definePlugin({
                     sendBotMessage(ctx.channel.id, { content: result.error });
                     return;
                 }
-                const lines = result.voices.slice(0, 25).map(v => `• **${v.name}** \`${v.voice_id}\``);
+                const lines = result.voices.slice(0, 30).map(v => {
+                    const free = v.category === "premade" ? "premade, free API" : `${v.category}, paid API`;
+                    return `• **${v.name}** \`${v.voice_id}\` (${free})`;
+                });
                 sendBotMessage(ctx.channel.id, { content: lines.join("\n") || "No voices." });
             },
         },

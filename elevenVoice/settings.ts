@@ -19,7 +19,7 @@ export const settings = definePluginSettings({
     voiceId: {
         type: OptionType.STRING,
         default: DEFAULT_VOICE_ID,
-        description: "Default ElevenLabs voice id.",
+        description: "Default ElevenLabs voice id. Free API keys only work with premade voices (Sarah, Will, George). Library/professional voices need a paid plan.",
     },
     modelId: {
         type: OptionType.SELECT,
