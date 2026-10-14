@@ -8,7 +8,7 @@ import { Logger } from "@utils/Logger";
 import { CloudUpload as TCloudUpload } from "@vencord/discord-types";
 import { CloudUploadPlatform } from "@vencord/discord-types/enums";
 import { findLazy } from "@webpack";
-import { ChannelStore, Constants, FluxDispatcher, lodash, MessageActions, PendingReplyStore, RestAPI, SelectedChannelStore, showToast, SnowflakeUtils, Toasts, UploadHandler } from "@webpack/common";
+import { ChannelStore, Constants, FluxDispatcher, lodash, MessageActions, PendingReplyStore, RestAPI, SelectedChannelStore, showToast, SnowflakeUtils, UploadHandler } from "@webpack/common";
 
 const logger = new Logger("ElevenVoice");
 const CloudUpload: typeof TCloudUpload = findLazy(m => m.prototype?.trackUploadFinished);
@@ -61,27 +61,27 @@ export function bytesToBlob(bytes: number[], mime: string) {
 
 export function sendAsFile(blob: Blob, mime: string, channelId = SelectedChannelStore.getChannelId()) {
     if (!channelId) {
-        showToast("No channel selected.", Toasts.Type.FAILURE);
+        showToast("No channel selected.", "failure");
         return;
     }
     const { ext, type } = mimeToExt(mime);
     const file = new File([blob], `eleven-voice.${ext}`, { type });
     const channel = ChannelStore.getChannel(channelId);
     if (!channel) {
-        showToast("No channel selected.", Toasts.Type.FAILURE);
+        showToast("No channel selected.", "failure");
         return;
     }
     try {
         UploadHandler.promptToUpload([file], channel, 0);
     } catch (e) {
         logger.error("File upload failed", e);
-        showToast("Could not attach the audio file.", Toasts.Type.FAILURE);
+        showToast("Could not attach the audio file.", "failure");
     }
 }
 
 export async function sendAsVoiceMessage(blob: Blob, mime: string, channelId = SelectedChannelStore.getChannelId()) {
     if (!channelId) {
-        showToast("No channel selected.", Toasts.Type.FAILURE);
+        showToast("No channel selected.", "failure");
         return;
     }
 
@@ -89,7 +89,7 @@ export async function sendAsVoiceMessage(blob: Blob, mime: string, channelId = S
     const isOpus = type.includes("ogg") && type.includes("opus");
     if (!isOpus) {
         sendAsFile(blob, mime, channelId);
-        showToast("Sent as a file because this clip is not Ogg Opus.", Toasts.Type.MESSAGE);
+        showToast("Sent as a file because this clip is not Ogg Opus.", "message");
         return;
     }
 
@@ -124,9 +124,9 @@ export async function sendAsVoiceMessage(blob: Blob, mime: string, channelId = S
             }
         }).catch(e => {
             logger.error("Voice message post failed", e);
-            showToast("Upload worked, but sending the voice message failed.", Toasts.Type.FAILURE);
+            showToast("Upload worked, but sending the voice message failed.", "failure");
         });
     });
-    upload.on("error", () => showToast("Failed to upload voice message.", Toasts.Type.FAILURE));
+    upload.on("error", () => showToast("Failed to upload voice message.", "failure"));
     upload.upload();
 }

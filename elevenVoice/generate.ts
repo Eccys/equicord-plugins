@@ -40,6 +40,20 @@ async function rendererPost(path: string, init: RequestInit): Promise<AudioResul
     }
 }
 
+export function isLibraryVoiceError(error: string) {
+    return /library voices|payment_required|paid_plan_required|free users cannot use/i.test(error);
+}
+
+export async function pickPremadeVoice() {
+    const listed = await listVoices();
+    if (!listed.ok) return null;
+    const premade = listed.voices.filter(v => v.category === "premade");
+    const preferred = premade.find(v => v.voice_id === "bIHbv24MWmeRgasZH58o")
+        || premade.find(v => v.voice_id === "EXAVITQu4vr4xnSDxMaL")
+        || premade[0];
+    return preferred?.voice_id ?? null;
+}
+
 export async function generateTts(text: string, voiceId?: string): Promise<AudioResult> {
     const args = {
         apiKey: key(),
@@ -48,9 +62,25 @@ export async function generateTts(text: string, voiceId?: string): Promise<Audio
         modelId: settings.store.modelId,
         outputFormat: settings.store.outputFormat,
     };
-    if (Native) return Native.tts(args);
+    const first = Native
+        ? await Native.tts(args)
+        : await rendererPost(
+            `/v1/text-to-speech/${encodeURIComponent(args.voiceId)}?output_format=${encodeURIComponent(args.outputFormat)}`,
+            {
+                method: "POST",
+                headers: { "Content-Type": "application/json", Accept: "audio/*" },
+                body: JSON.stringify({ text: args.text, model_id: args.modelId }),
+            }
+        );
+    if (first.ok || !isLibraryVoiceError(first.error)) return first;
+
+    const fallback = await pickPremadeVoice();
+    if (!fallback || fallback === args.voiceId) return first;
+    settings.store.voiceId = fallback;
+    const retryArgs = { ...args, voiceId: fallback };
+    if (Native) return Native.tts(retryArgs);
     return rendererPost(
-        `/v1/text-to-speech/${encodeURIComponent(args.voiceId)}?output_format=${encodeURIComponent(args.outputFormat)}`,
+        `/v1/text-to-speech/${encodeURIComponent(fallback)}?output_format=${encodeURIComponent(args.outputFormat)}`,
         {
             method: "POST",
             headers: { "Content-Type": "application/json", Accept: "audio/*" },
@@ -87,8 +117,15 @@ export async function listVoices() {
             headers: { "xi-api-key": apiKey },
         });
         if (!res.ok) return { ok: false as const, error: `ElevenLabs ${res.status}` };
-        const json = await res.json() as { voices?: { voice_id: string; name: string; }[]; };
-        return { ok: true as const, voices: json.voices ?? [] };
+        const json = await res.json() as { voices?: { voice_id: string; name: string; category?: string; }[]; };
+        return {
+            ok: true as const,
+            voices: (json.voices ?? []).map(v => ({
+                voice_id: v.voice_id,
+                name: v.name,
+                category: v.category || "unknown",
+            })),
+        };
     } catch {
         return { ok: false as const, error: "Could not list voices." };
     }
