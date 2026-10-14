@@ -76,14 +76,17 @@ function ElevenModal({ modalProps }: { modalProps: RenderModalProps; }) {
     const [recording, setRecording] = useState(false);
     const recorderRef = useRef<MediaRecorder | null>(null);
     const streamRef = useRef<MediaStream | null>(null);
+    const unmountedRef = useRef(false);
 
     useEffect(() => () => {
+        unmountedRef.current = true;
         if (recorderRef.current && recorderRef.current.state !== "inactive") {
             recorderRef.current.onstop = null;
             recorderRef.current.stop();
         }
         if (streamRef.current) {
             for (const t of streamRef.current.getTracks()) t.stop();
+            streamRef.current = null;
         }
     }, []);
 
@@ -91,9 +94,9 @@ function ElevenModal({ modalProps }: { modalProps: RenderModalProps; }) {
         setBusy(true);
         try {
             const ok = await runTts(script, { intoVc });
-            if (ok) modalProps.onClose();
+            if (ok && !unmountedRef.current) modalProps.onClose();
         } finally {
-            setBusy(false);
+            if (!unmountedRef.current) setBusy(false);
         }
     }
 
@@ -104,16 +107,22 @@ function ElevenModal({ modalProps }: { modalProps: RenderModalProps; }) {
         }
         try {
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            if (unmountedRef.current) {
+                for (const t of stream.getTracks()) t.stop();
+                return;
+            }
             streamRef.current = stream;
             const rec = new MediaRecorder(stream);
             const chunks: BlobPart[] = [];
             rec.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
             rec.onstop = async () => {
-                setRecording(false);
                 for (const t of stream.getTracks()) t.stop();
                 streamRef.current = null;
+                if (unmountedRef.current) return;
+                setRecording(false);
                 const blob = new Blob(chunks, { type: rec.mimeType || "audio/webm" });
                 const bytes = Array.from(new Uint8Array(await blob.arrayBuffer()));
+                if (unmountedRef.current) return;
                 setBusy(true);
                 try {
                     showToast("Converting voice…", "message");
@@ -123,9 +132,9 @@ function ElevenModal({ modalProps }: { modalProps: RenderModalProps; }) {
                         return;
                     }
                     await deliver(result.bytes, result.mime, false);
-                    modalProps.onClose();
+                    if (!unmountedRef.current) modalProps.onClose();
                 } finally {
-                    setBusy(false);
+                    if (!unmountedRef.current) setBusy(false);
                 }
             };
             recorderRef.current = rec;

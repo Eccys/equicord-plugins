@@ -56,12 +56,14 @@ function refreshVoiceState(enabled: boolean) {
     if (!socket || !channelId) return;
 
     const channel = ChannelStore.getChannel(channelId);
+    const selfMute = MediaEngineStore?.isSelfMute?.() ?? MediaEngineStore?.isMute?.() ?? false;
+    const selfDeaf = MediaEngineStore?.isSelfDeaf?.() ?? MediaEngineStore?.isDeaf?.() ?? false;
     try {
         socket.send(4, {
             guild_id: channel?.guild_id ?? null,
             channel_id: channelId,
-            self_mute: (enabled && settings.store.fakeMute) || (MediaEngineStore?.isMute?.() ?? false),
-            self_deaf: (enabled && settings.store.fakeDeafen) || (MediaEngineStore?.isDeaf?.() ?? false),
+            self_mute: (enabled && settings.store.fakeMute) || selfMute,
+            self_deaf: (enabled && settings.store.fakeDeafen) || selfDeaf,
             self_video: MediaEngineStore?.isVideoEnabled?.() ?? false,
             flags: 0,
         });
@@ -69,6 +71,13 @@ function refreshVoiceState(enabled: boolean) {
         logger.error("Failed to refresh voice state", e);
     }
 }
+
+settings.def.fakeMute.onChange = () => {
+    if (settings.store.currentlyEnabled) refreshVoiceState(true);
+};
+settings.def.fakeDeafen.onChange = () => {
+    if (settings.store.currentlyEnabled) refreshVoiceState(true);
+};
 
 function setEnabled(next: boolean) {
     settings.store.currentlyEnabled = next;
