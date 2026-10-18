@@ -892,7 +892,18 @@ function AutocordControlModal({ modalProps, channelId }: { modalProps: RenderMod
             Promise.resolve((Native as any).getSessionInfo({ channelId }))
                 .then((res: any) => {
                     if (!mountedRef.current) return;
-                    if (res?.sessions && typeof res.sessions === "object") {
+                    if (res?.sessionMap && typeof res.sessionMap === "object" && !Array.isArray(res.sessionMap)) {
+                        setSessionMap(res.sessionMap);
+                    } else if (Array.isArray(res?.sessions)) {
+                        const map: Record<string, string> = {};
+                        for (const item of res.sessions) {
+                            if (item?.provider && item?.channelId && item?.sessionId) {
+                                map[`${item.provider}::${item.channelId}`] = String(item.sessionId);
+                                map[`${item.provider}:${item.channelId}`] = String(item.sessionId);
+                            }
+                        }
+                        setSessionMap(map);
+                    } else if (res?.sessions && typeof res.sessions === "object") {
                         setSessionMap(res.sessions);
                     }
                 })
@@ -1237,7 +1248,7 @@ function AutocordControlModal({ modalProps, channelId }: { modalProps: RenderMod
 
                 <Span size="sm" color="text-subtle">
                     <strong>Active Channel Session ({activeProvider}):</strong>{" "}
-                    {activeProviderSessionId ? `\`${activeProviderSessionId}\`` : "No persistent session bound yet for this channel."}
+                    {activeProviderSessionId ? <code>{activeProviderSessionId}</code> : "No persistent session bound yet for this channel."}
                 </Span>
 
                 <Divider />

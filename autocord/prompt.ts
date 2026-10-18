@@ -848,7 +848,11 @@ function unwrapDecisionEnvelope(obj: Record<string, unknown>, depth = 0): Record
 
     // 1. Grok / OpenAI structuredOutput field
     if (obj.structuredOutput && typeof obj.structuredOutput === "object" && !Array.isArray(obj.structuredOutput)) {
-        return unwrapDecisionEnvelope(obj.structuredOutput as Record<string, unknown>, depth + 1);
+        const unwrapped = unwrapDecisionEnvelope(obj.structuredOutput as Record<string, unknown>, depth + 1);
+        if (typeof obj.thought === "string" && obj.thought.trim() && !unwrapped.reasoning && !unwrapped.thought) {
+            return { ...unwrapped, thought: obj.thought };
+        }
+        return unwrapped;
     }
 
     // 2. If this object already has an explicit decision action or persona_id/reply_to, check if its content/text is itself a nested JSON decision

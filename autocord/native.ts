@@ -1402,7 +1402,7 @@ async function callCodexProvider(
 
             const finalOutput = fileOutput || lastAgentMessageFromJsonl || res.stdout.trim();
             const hasValidDecision = isValidDecisionOutput(finalOutput);
-            if ((res.code !== 0 && !hasValidDecision) || !finalOutput) {
+            if (!hasValidDecision || !finalOutput) {
                 const combinedErr = `${res.stdout}\n${res.stderr}`;
                 const isModelUnsupported =
                     /Model metadata for .* not found|is not supported when using Codex/i.test(combinedErr) &&
@@ -1416,21 +1416,23 @@ async function callCodexProvider(
                     }
                     continue;
                 }
-                return {
-                    ok: false,
-                    error: `Codex CLI exited with code ${res.code}: ${(res.stderr || res.stdout || "empty output").slice(0, 260)}`,
-                };
+                if (res.code !== 0 || !finalOutput) {
+                    return {
+                        ok: false,
+                        error: `Codex CLI exited with code ${res.code}: ${(res.stderr || res.stdout || "empty output").slice(0, 260)}`,
+                    };
+                }
             }
 
-            if (reuseSession && discoveredThreadId) {
-                const existing = getChannelSession("codex", channelId);
+            if (reuseSession && discoveredThreadId && hasValidDecision) {
+                const sameSession = Boolean(existing && existing.sessionId === discoveredThreadId);
                 setChannelSession({
                     provider: "codex",
                     channelId,
                     sessionId: discoveredThreadId,
                     model: activeModel,
-                    turnCount: (existing?.turnCount ?? 0) + 1,
-                    createdAt: existing?.createdAt ?? Date.now(),
+                    turnCount: sameSession ? (existing?.turnCount ?? 0) + 1 : 1,
+                    createdAt: sameSession ? (existing?.createdAt ?? Date.now()) : Date.now(),
                     updatedAt: Date.now(),
                 });
             }
@@ -1611,28 +1613,31 @@ async function callClaudeProvider(
         }
 
         const hasValidDecision = !cliReportedError && isValidDecisionOutput(extractedText);
-        if (cliReportedError || (res.code !== 0 && !hasValidDecision) || !extractedText) {
+        if (cliReportedError || !hasValidDecision || !extractedText) {
             if (isResume && attempt === 0) {
                 deleteChannelSession("claude", channelId);
                 continue;
             }
-            if (anthropicKey) {
-                return callAnthropicMessagesApi(anthropicKey, promptText, model, effort, timeoutMs);
+            if (cliReportedError || res.code !== 0 || !extractedText) {
+                if (anthropicKey) {
+                    return callAnthropicMessagesApi(anthropicKey, promptText, model, effort, timeoutMs);
+                }
+                return {
+                    ok: false,
+                    error: `Claude CLI exited with code ${res.code}: ${(res.stderr || extractedText || res.stdout).slice(0, 240)}`,
+                };
             }
-            return {
-                ok: false,
-                error: `Claude CLI exited with code ${res.code}: ${(res.stderr || extractedText || res.stdout).slice(0, 240)}`,
-            };
         }
 
-        if (reuseSession) {
+        if (reuseSession && hasValidDecision) {
+            const sameSession = Boolean(existing && existing.sessionId === resolvedSessionId);
             setChannelSession({
                 provider: "claude",
                 channelId,
                 sessionId: resolvedSessionId,
                 model,
-                turnCount: (existing?.turnCount ?? 0) + 1,
-                createdAt: existing?.createdAt ?? Date.now(),
+                turnCount: sameSession ? (existing?.turnCount ?? 0) + 1 : 1,
+                createdAt: sameSession ? (existing?.createdAt ?? Date.now()) : Date.now(),
                 updatedAt: Date.now(),
             });
         }
@@ -1757,29 +1762,53 @@ async function callGrokProvider(
             });
 
             const output = res.stdout.trim();
-            const hasValidDecision = isValidDecisionOutput(output);
-            if ((res.code !== 0 && !hasValidDecision) || !output) {
+            let resolvedSessionId = sessionId;
+            let cliReportedError = false;
+            try {
+                const parsed = JSON.parse(output) as {
+                    is_error?: boolean;
+                    stopReason?: string;
+                    error?: unknown;
+                    sessionId?: string;
+                    session_id?: string;
+                };
+                if (parsed.is_error === true || parsed.stopReason === "error" || Boolean(parsed.error)) {
+                    cliReportedError = true;
+                }
+                const sid = parsed.sessionId || parsed.session_id;
+                if (typeof sid === "string" && sid.trim()) {
+                    resolvedSessionId = sid.trim();
+                }
+            } catch {
+                // Keep raw stdout
+            }
+
+            const hasValidDecision = !cliReportedError && isValidDecisionOutput(output);
+            if (cliReportedError || !hasValidDecision || !output) {
                 if (isResume && attempt === 0) {
                     deleteChannelSession("grok", channelId);
                     continue;
                 }
-                if (xaiKey) {
-                    return callOpenAiCompatibleProvider("grok", args, promptText, model, effort, timeoutMs);
+                if (cliReportedError || res.code !== 0 || !output) {
+                    if (xaiKey) {
+                        return callOpenAiCompatibleProvider("grok", args, promptText, model, effort, timeoutMs);
+                    }
+                    return {
+                        ok: false,
+                        error: `Grok CLI exited with code ${res.code}: ${(res.stderr || res.stdout || "empty output").slice(0, 260)}`,
+                    };
                 }
-                return {
-                    ok: false,
-                    error: `Grok CLI exited with code ${res.code}: ${(res.stderr || res.stdout || "empty output").slice(0, 260)}`,
-                };
             }
 
-            if (reuseSession) {
+            if (reuseSession && hasValidDecision) {
+                const sameSession = Boolean(existing && existing.sessionId === resolvedSessionId);
                 setChannelSession({
                     provider: "grok",
                     channelId,
-                    sessionId,
+                    sessionId: resolvedSessionId,
                     model,
-                    turnCount: (existing?.turnCount ?? 0) + 1,
-                    createdAt: existing?.createdAt ?? Date.now(),
+                    turnCount: sameSession ? (existing?.turnCount ?? 0) + 1 : 1,
+                    createdAt: sameSession ? (existing?.createdAt ?? Date.now()) : Date.now(),
                     updatedAt: Date.now(),
                 });
             }
@@ -1787,7 +1816,7 @@ async function callGrokProvider(
             return {
                 ok: true,
                 rawText: output,
-                sessionId,
+                sessionId: resolvedSessionId,
             };
         } finally {
             try {
@@ -2123,7 +2152,7 @@ export async function checkProvidersHealth(
 
 export async function listProviderModels(
     _event: IpcMainInvokeEvent,
-    args: { provider: ProviderKind; apiKey?: string; baseUrl?: string; },
+    args: Partial<GenerateDecisionArgs> & { provider: ProviderKind; apiKey?: string; baseUrl?: string; },
 ): Promise<{
     ok: boolean;
     provider: ProviderKind;
@@ -2137,26 +2166,24 @@ export async function listProviderModels(
 
     if (provider === "nvidia" || provider === "openai" || provider === "grok") {
         const apiKey = (
-            args?.apiKey ||
             (provider === "nvidia"
-                ? process.env.NVIDIA_API_KEY || process.env.NGC_API_KEY
+                ? args?.nvidiaApiKey || args?.apiKey || process.env.NVIDIA_API_KEY || process.env.NGC_API_KEY
                 : provider === "grok"
-                    ? process.env.XAI_API_KEY || process.env.GROK_API_KEY
-                    : process.env.OPENAI_API_KEY) ||
+                    ? args?.xaiApiKey || args?.grokApiKey || args?.apiKey || process.env.XAI_API_KEY || process.env.GROK_API_KEY
+                    : args?.openaiApiKey || args?.apiKey || process.env.OPENAI_API_KEY) ||
             ""
         ).trim();
         const baseUrl = (
-            args?.baseUrl ||
             (provider === "nvidia"
-                ? DEFAULT_NVIDIA_BASE_URL
+                ? args?.nvidiaBaseUrl || args?.baseUrl || DEFAULT_NVIDIA_BASE_URL
                 : provider === "grok"
-                    ? DEFAULT_XAI_BASE_URL
-                    : process.env.OPENAI_BASE_URL || DEFAULT_OPENAI_BASE_URL)
+                    ? args?.grokBaseUrl || args?.baseUrl || DEFAULT_XAI_BASE_URL
+                    : args?.openaiBaseUrl || args?.baseUrl || process.env.OPENAI_BASE_URL || DEFAULT_OPENAI_BASE_URL)
         ).trim();
         const isLocalEndpoint = provider === "openai" && /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?/i.test(baseUrl);
 
         if (provider === "grok" && !apiKey) {
-            const grokExe = findGrokExecutable();
+            const grokExe = findGrokExecutable(args?.grokPath || args?.grokCliPath);
             if (grokExe) {
                 try {
                     const res = await runHiddenSubprocess({
@@ -2166,7 +2193,7 @@ export async function listProviderModels(
                     });
                     const cliModels: string[] = [];
                     for (const line of res.stdout.split(/\r?\n/)) {
-                        const m = line.match(/^\s{2,4}(grok-[a-z0-9._-]+)\b/i);
+                        const m = line.match(/^\s*[*•-]?\s*(grok-[a-z0-9._-]+)\b/i);
                         if (m && m[1]) cliModels.push(m[1]);
                     }
                     if (cliModels.length > 0) {
@@ -2227,11 +2254,17 @@ export async function getSessionInfo(
 ): Promise<{
     ok: boolean;
     sessions: ChannelSessionRecord[];
+    sessionMap: Record<string, string>;
 }> {
     ensureSessionsLoaded();
     const filterChannel = args?.channelId ? String(args.channelId).trim() : "";
     const sessions = Array.from(sessionStore.values()).filter(
         s => !filterChannel || s.channelId === filterChannel
     );
-    return { ok: true, sessions };
+    const sessionMap: Record<string, string> = {};
+    for (const s of sessions) {
+        sessionMap[`${s.provider}::${s.channelId}`] = s.sessionId;
+        sessionMap[`${s.provider}:${s.channelId}`] = s.sessionId;
+    }
+    return { ok: true, sessions, sessionMap };
 }
